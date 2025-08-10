@@ -1,2 +1,5 @@
 input_path: data/input
 output_path: data/output
+s3_raw_path: s3://raph-s3-raw/
+s3_refined_path: s3://raph-s3-refined/
+s3_curated_path: s3://raph-s3-curated/

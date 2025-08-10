@@ -1,56 +1,47 @@
-from source.utils.spark_util import create_session
+import source.utils.spark_util as spu
 import source.utils.common_util as cmu
 import source.utils.transformation_util as tru
 import source.utils.config_util as cou
+import source.utils.schema_util as scu
 
-from pyspark.sql.types import StructType, StructField, IntegerType, StringType, DateType, TimestampType
-import pyspark.sql.functions as sf
+from pyspark.sql.types import StructType, StructField, IntegerType, StringType, DateType, TimestampType, BooleanType
+from pyspark.sql import DataFrame
 
-def clean_sf_fire_service_calls(file_name: str):
+
+def transform_sf_fire_service_calls(raw_df: DataFrame):
+    """Apply date transformation"""
+    date_fields = ['CallDate', 'WatchDate']
+    transformed_df = tru.transform_date(raw_df, date_fields, 'MM/dd/yyyy')
+
+    """Apply datetime transformation"""
+    datetime_fields = ['ReceivedDtTm', 'EntryDtTm', 'DispatchDtTm', 'ResponseDtTm',
+                       'OnSceneDtTm', 'TransportDtTm', 'HospitalDtTm',
+                       'AvailableDtTm', 'DataLoadedAt']
+
+    transformed_df = tru.transform_datetime(transformed_df, datetime_fields, 'MM/dd/yyyy HH:mm:SS a')
+
+    initcase_fields = ['Address', 'UnitType']
+
+    transformed_df = tru.change_case(transformed_df, initcase_fields, 'I')
+
+    return transformed_df
+
+
+def clean_sf_fire_service_calls(folder_name: str,
+                                file_name: str):
     """Create a spark session"""
-    spark_session = create_session('clean-sf-fire-service-calls')
+    spark_session = spu.create_session('clean-sf-fire-service-calls')
     cou.set_spark_session_config(spark_session)
 
-    file_path = cmu.get_file_path(file_name)
+    spark_conf = spark_session.sparkContext.getConf()
+    print("Executor Memory: ", spark_conf.get("spark.executor.memory", "Not Set"))
+    print("Driver Memory: ", spark_conf.get("spark.driver.memory", "Not Set"))
+    print("Executor Cores: ", spark_conf.get("spark.executor.cores", "Not Set"))
+    print("Executor Instances: ", spark_conf.get("spark.executor.instances", "Not Set"))
 
-    """Define the schema"""
-    schema = StructType([StructField('CallNumber', IntegerType(), True),
-                         StructField('UnitId', StringType(), True),
-                         StructField('IncidentNumber', IntegerType(), True),
-                         StructField('CallType', StringType(), True),
-                         StructField('CallDate', StringType(), True),
-                         StructField('WatchDate', StringType(), True),
-                         StructField('ReceivedDtTm', StringType(), True),
-                         StructField('EntryDtTm', StringType(), True),
-                         StructField('DispatchDtTm', StringType(), True),
-                         StructField('ResponseDtTm', StringType(), True),
-                         StructField('OnSceneDtTm', StringType(), True),
-                         StructField('TransportDtTm', StringType(), True),
-                         StructField('HospitalDtTm', StringType(), True),
-                         StructField('CallFinalDisposition', StringType(), True),
-                         StructField('AvailableDtTm', StringType(), True),
-                         StructField('Address', StringType(), True),
-                         StructField('City', StringType(), True),
-                         StructField('ZipCode', IntegerType(), True),
-                         StructField('Battalion', StringType(), True),
-                         StructField('StationArea', StringType(), True),
-                         StructField('Box', IntegerType(), True),
-                         StructField('OriginalPriority', IntegerType(), True),
-                         StructField('Priority', IntegerType(), True),
-                         StructField('FinalPriority', IntegerType(), True),
-                         StructField('ALSUnit', StringType(), True),
-                         StructField('CallTypeGroup', StringType(), True),
-                         StructField('NumberOfAlarms', IntegerType(), True),
-                         StructField('UnitType', StringType(), True),
-                         StructField('UnitSequenceInCallDispatch', IntegerType(), True),
-                         StructField('FirePreventionDistrict', IntegerType(), True),
-                         StructField('SupervisorDistrict', IntegerType(), True),
-                         StructField('NeighborhoodsAnalysisBoundaries', StringType(), True),
-                         StructField('RowId', StringType(), True),
-                         StructField('CaseLocation', StringType(), True),
-                         StructField('DataAsOf', StringType(), True),
-                         StructField('DataLoadedAt', StringType(), True),
-                         StructField('Analysis Neighborhoods', IntegerType(), True)])
+    """Get input/output file path"""
+    input_file_path = cmu.get_raw_file_path(folder_name, file_name)
+    output_file_path = cmu.get_refined_file_path(folder_name, file_name.split('.')[0])
 
     """Read a file"""
     sf_fire_service_df = spark_session.read \
@@ -58,32 +49,36 @@ def clean_sf_fire_service_calls(file_name: str):
         .option("delimiter", ",") \
         .option("header", True) \
         .option("inferSchema", False) \
-        .schema(schema) \
-        .load(file_path)
+        .schema(scu.sf_fire_service_calls) \
+        .load(input_file_path)
 
     print(sf_fire_service_df.count())
-    sf_fire_service_df.printSchema()
-    sf_fire_service_df.show(10)
+    #sf_fire_service_df.printSchema()
+    #sf_fire_service_df.show(10)
 
-    """Apply date transformation"""
-    date_fields = ['CallDate', 'WatchDate']
-    sf_fire_service_df = tru.transform_date(sf_fire_service_df, date_fields, 'MM/dd/yyyy')
+    sf_fire_service_df = transform_sf_fire_service_calls(sf_fire_service_df)
 
-    """Apply datetime transformation"""
-    datetime_fields = ['ReceivedDtTm', 'EntryDtTm', 'DispatchDtTm', 'ResponseDtTm',
-                       'OnSceneDtTm', 'TransportDtTm', 'HospitalDtTm',
-                       'AvailableDtTm', 'DataLoadedAt']
+    #sf_fire_service_df.printSchema()
+    #sf_fire_service_df.show(10)
+    sf_fire_service_df = sf_fire_service_df.repartition(10)
+    print(sf_fire_service_df.rdd.getNumPartitions())
 
-    sf_fire_service_df = tru.transform_datetime(sf_fire_service_df, datetime_fields, 'MM/dd/yyyy HH:mm:SS a')
+    sf_fire_service_df.write \
+        .mode('overwrite') \
+        .format('parquet') \
+        .save(output_file_path)
 
-    sf_fire_service_df.printSchema()
-    sf_fire_service_df.show()
+    user_input = input("Press Enter: ")
 
     spark_session.stop()
 
+    return sf_fire_service_df
+
 
 if __name__ == "__main__":
+    folder = 'sf_fire_service_calls'
     file = 'Fire_Service_Calls_20250727.csv'
-    clean_sf_fire_service_calls(file)
+    cleaned_df = clean_sf_fire_service_calls(folder, file)
 
     print('Completed Well!')
+
